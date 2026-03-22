@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -23,3 +23,44 @@ class BatchPredictItem(BaseModel):
 
 class BatchPredictResponse(BaseModel):
     items: List[BatchPredictItem]
+
+
+class PathPredictRequest(BaseModel):
+    relative_path: str
+    storage: Literal["attachments", "uploads"] = "attachments"
+    source_name: Optional[str] = None
+    conf: Optional[float] = None
+    masks: bool = False
+    boxes: bool = True
+    summary: bool = True
+
+
+class PathPredictResponse(PredictResponse):
+    relative_path: str
+    storage: str
+    source_name: Optional[str] = None
+
+
+class PathBatchPredictItem(BaseModel):
+    relative_path: str
+    storage: Literal["attachments", "uploads"] = "attachments"
+    source_name: Optional[str] = None
+    conf: Optional[float] = None
+
+
+class PathBatchPredictResult(BaseModel):
+    relative_path: str
+    storage: str
+    source_name: Optional[str] = None
+    result: PredictResponse
+
+
+class PathBatchPredictRequest(BaseModel):
+    items: List[PathBatchPredictItem]
+    masks: bool = False
+    boxes: bool = True
+    summary: bool = True
+
+
+class PathBatchPredictResponse(BaseModel):
+    items: List[PathBatchPredictResult]

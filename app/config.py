@@ -7,6 +7,8 @@ from pydantic import BaseSettings
 class Settings(BaseSettings):
     app_name: str = "rost-ai"
     model_dir: Path = Path("models/best_openvino_model")
+    attachments_root: Path = Path("/home/rost/files/doc_attachments")
+    uploads_root: Path = Path("runtime/uploads")
     task: str = "segment"
     image_size: int = 1280
     default_conf: float = 0.25

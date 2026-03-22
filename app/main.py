@@ -1,13 +1,38 @@
 from typing import List
 
-from fastapi import FastAPI, File, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 
 from app.config import get_settings
-from app.schemas import BatchPredictItem, BatchPredictResponse, PredictResponse
-from app.service import get_model_info, predict_image
+from app.schemas import (
+    BatchPredictItem,
+    BatchPredictResponse,
+    PathBatchPredictRequest,
+    PathBatchPredictResponse,
+    PathBatchPredictResult,
+    PathPredictRequest,
+    PathPredictResponse,
+    PredictResponse,
+)
+from app.service import get_model_info, predict_image, predict_relative_path
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
+
+
+def _run_path_prediction(relative_path, storage, masks, boxes, summary, conf):
+    try:
+        return predict_relative_path(
+            relative_path,
+            storage=storage,
+            include_masks=masks,
+            include_boxes=boxes,
+            include_summary=summary,
+            conf=conf,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @app.get("/healthz")
@@ -62,3 +87,44 @@ async def predict_batch(
             )
         )
     return BatchPredictResponse(items=items)
+
+
+@app.post("/predict/path", response_model=PathPredictResponse)
+def predict_path(payload: PathPredictRequest):
+    result = _run_path_prediction(
+        payload.relative_path,
+        payload.storage,
+        payload.masks,
+        payload.boxes,
+        payload.summary,
+        payload.conf,
+    )
+    return PathPredictResponse(
+        relative_path=payload.relative_path,
+        storage=payload.storage,
+        source_name=payload.source_name,
+        **result
+    )
+
+
+@app.post("/predict/paths", response_model=PathBatchPredictResponse)
+def predict_paths(payload: PathBatchPredictRequest):
+    items = []
+    for item in payload.items:
+        result = _run_path_prediction(
+            item.relative_path,
+            item.storage,
+            payload.masks,
+            payload.boxes,
+            payload.summary,
+            item.conf,
+        )
+        items.append(
+            PathBatchPredictResult(
+                relative_path=item.relative_path,
+                storage=item.storage,
+                source_name=item.source_name,
+                result=PredictResponse(**result),
+            )
+        )
+    return PathBatchPredictResponse(items=items)
