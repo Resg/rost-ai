@@ -25,6 +25,21 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+Recommended local port for integration with `rost`:
+
+```bash
+uvicorn app.main:app --host 127.0.0.1 --port 18080 --reload
+```
+
+## Local Docker development
+
+```bash
+cp .env.example .env
+docker compose -f docker-compose.dev.yml up --build
+```
+
+This starts the service on `http://127.0.0.1:18080` and mounts local `app/` and `models/`.
+
 Environment variables:
 
 - `ROST_AI_MODEL_DIR` - path to extracted OpenVINO model directory
@@ -32,6 +47,15 @@ Environment variables:
 - `ROST_AI_IMAGE_SIZE` - defaults to `1280`
 - `ROST_AI_DEFAULT_CONF` - defaults to `0.25`
 - `ROST_AI_DEFAULT_IOU` - defaults to `0.45`
+
+## Integration with rost
+
+For local `rost` development point Django to the local AI service:
+
+```bash
+export AI_SERVICE_URL=http://127.0.0.1:18080
+export AI_SERVICE_TIMEOUT=300
+```
 
 ## API
 

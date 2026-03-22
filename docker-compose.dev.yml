@@ -1,0 +1,16 @@
+services:
+  rost-ai:
+    build:
+      context: .
+    environment:
+      ROST_AI_MODEL_DIR: /app/models/best_openvino_model
+      ROST_AI_TASK: ${ROST_AI_TASK:-segment}
+      ROST_AI_IMAGE_SIZE: ${ROST_AI_IMAGE_SIZE:-1280}
+      ROST_AI_DEFAULT_CONF: ${ROST_AI_DEFAULT_CONF:-0.25}
+      ROST_AI_DEFAULT_IOU: ${ROST_AI_DEFAULT_IOU:-0.45}
+    ports:
+      - "127.0.0.1:18080:8000"
+    volumes:
+      - ./app:/app/app
+      - ./models:/app/models
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
