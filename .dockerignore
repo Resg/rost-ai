@@ -1,0 +1,7 @@
+.git
+.venv
+__pycache__/
+app/__pycache__/
+models/.gitkeep
+models/**/._*
+.DS_Store
