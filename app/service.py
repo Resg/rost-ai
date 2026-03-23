@@ -55,11 +55,11 @@ def resolve_model_dir(model_code: str = None) -> Path:
     resolved_model_code = normalize_model_code(model_code)
     candidates = []
 
-    if resolved_model_code == settings.default_model_code:
-        candidates.append(Path(settings.model_dir))
-
     candidates.append(Path(settings.models_root) / resolved_model_code)
     candidates.append(Path(settings.models_root) / resolved_model_code / "best_openvino_model")
+
+    if resolved_model_code == settings.default_model_code:
+        candidates.append(Path(settings.model_dir))
 
     seen = set()
     for candidate in candidates:
