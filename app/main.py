@@ -13,7 +13,14 @@ from app.schemas import (
     PathPredictResponse,
     PredictResponse,
 )
-from app.service import get_model_info, predict_image, predict_relative_path
+from app.service import (
+    InferenceQueueFull,
+    InferenceTimeout,
+    get_health_status,
+    get_model_info,
+    predict_image,
+    predict_relative_path,
+)
 
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
@@ -34,11 +41,15 @@ def _run_path_prediction(relative_path, storage, masks, boxes, summary, conf, mo
         raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except InferenceQueueFull as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
+    except InferenceTimeout as exc:
+        raise HTTPException(status_code=504, detail=str(exc))
 
 
 @app.get("/healthz")
 def healthz():
-    return {"status": "ok"}
+    return get_health_status()
 
 
 @app.get("/model/info")

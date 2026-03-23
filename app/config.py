@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     image_size: int = 640
     default_conf: float = 0.25
     default_iou: float = 0.45
+    inference_workers: int = 2
+    inference_queue_size: int = 32
+    inference_wait_timeout: int = 300
 
     class Config:
         env_prefix = "ROST_AI_"

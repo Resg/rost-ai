@@ -3,11 +3,55 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List
 import os
+import queue
+import threading
+import time
 
 from PIL import Image, ImageOps
 from ultralytics import YOLO
 
 from app.config import get_settings
+
+
+class InferenceQueueFull(RuntimeError):
+    pass
+
+
+class InferenceTimeout(RuntimeError):
+    pass
+
+
+class _InferenceJob(object):
+    def __init__(
+        self,
+        job_type: str,
+        model_code: str,
+        include_masks: bool,
+        include_boxes: bool,
+        include_summary: bool,
+        conf: float = None,
+        image_bytes: bytes = None,
+        image_path: str = None,
+    ) -> None:
+        self.job_type = job_type
+        self.model_code = model_code
+        self.include_masks = include_masks
+        self.include_boxes = include_boxes
+        self.include_summary = include_summary
+        self.conf = conf
+        self.image_bytes = image_bytes
+        self.image_path = image_path
+        self.result = None
+        self.error = None
+        self.done = threading.Event()
+        self.queued_at = time.time()
+
+
+_inference_queue = None
+_inference_queue_lock = threading.Lock()
+_inference_threads = []
+_active_jobs = 0
+_active_jobs_lock = threading.Lock()
 
 
 def _load_image(image_bytes: bytes) -> Image.Image:
@@ -87,6 +131,14 @@ def get_model(model_code: str = None) -> YOLO:
     return YOLO(str(model_dir), task=settings.task)
 
 
+def _create_model(model_code: str = None) -> YOLO:
+    settings = get_settings()
+    model_dir = resolve_model_dir(model_code)
+    if not model_dir.exists():
+        raise RuntimeError("Model directory does not exist: %s" % model_dir)
+    return YOLO(str(model_dir), task=settings.task)
+
+
 def get_model_info(model_code: str = None) -> Dict[str, Any]:
     settings = get_settings()
     resolved_model_code = normalize_model_code(model_code)
@@ -100,7 +152,23 @@ def get_model_info(model_code: str = None) -> Dict[str, Any]:
         "uploads_root": str(settings.uploads_root),
         "task": settings.task,
         "image_size": settings.image_size,
+        "inference_workers": settings.inference_workers,
+        "inference_queue_size": settings.inference_queue_size,
         "labels": model.names,
+    }
+
+
+def get_health_status() -> Dict[str, Any]:
+    settings = get_settings()
+    inference_queue = _ensure_inference_pool()
+    with _active_jobs_lock:
+        active_jobs = _active_jobs
+    return {
+        "status": "ok",
+        "inference_workers": settings.inference_workers,
+        "queue_size": inference_queue.qsize(),
+        "queue_capacity": settings.inference_queue_size,
+        "active_jobs": active_jobs,
     }
 
 
@@ -112,15 +180,16 @@ def predict_image(
     conf: float = None,
     model_code: str = None,
 ) -> Dict[str, Any]:
-    image = _load_image(image_bytes)
-    return _predict_loaded_image(
-        image,
+    job = _InferenceJob(
+        job_type="bytes",
+        model_code=model_code,
         include_masks=include_masks,
         include_boxes=include_boxes,
         include_summary=include_summary,
         conf=conf,
-        model_code=model_code,
+        image_bytes=image_bytes,
     )
+    return _run_inference_job(job)
 
 
 def _predict_loaded_image(
@@ -173,6 +242,138 @@ def _predict_loaded_image(
     return response
 
 
+def _predict_loaded_image_with_model(
+    image: Image.Image,
+    model: YOLO,
+    settings,
+    include_masks: bool = False,
+    include_boxes: bool = True,
+    include_summary: bool = True,
+    conf: float = None,
+    model_code: str = None,
+) -> Dict[str, Any]:
+    resolved_model_code = normalize_model_code(model_code)
+    threshold = settings.default_conf if conf is None else conf
+    result = model.predict(
+        image,
+        imgsz=settings.image_size,
+        conf=threshold,
+        iou=settings.default_iou,
+        verbose=False,
+    )[0]
+
+    response: Dict[str, Any] = {}
+    found_labels: List[str] = []
+    detections: List[Dict[str, Any]] = []
+    response["model_code"] = resolved_model_code
+    response["image_width"] = int(image.width or 0)
+    response["image_height"] = int(image.height or 0)
+
+    if result.boxes is not None and len(result.boxes):
+        for index in range(len(result.boxes)):
+            box = result.boxes[index]
+            label = model.names[int(box.cls[0])]
+            found_labels.append(label)
+            item = {
+                "label": label,
+                "conf": round(float(box.conf[0]), 3),
+            }
+            if include_boxes:
+                item["bbox"] = [float(value) for value in box.xyxy[0].tolist()]
+            if include_masks and result.masks is not None:
+                polygon = result.masks.xy[index]
+                item["mask"] = [[float(x), float(y)] for x, y in polygon.tolist()]
+            detections.append(item)
+
+    response["detections"] = detections
+    if include_summary:
+        response["total_count"] = len(found_labels)
+        response["summary"] = dict(Counter(found_labels))
+    return response
+
+
+def _ensure_inference_pool():
+    global _inference_queue
+    if _inference_queue is not None:
+        return _inference_queue
+
+    with _inference_queue_lock:
+        if _inference_queue is not None:
+            return _inference_queue
+
+        settings = get_settings()
+        _inference_queue = queue.Queue(maxsize=max(1, int(settings.inference_queue_size)))
+        for index in range(max(1, int(settings.inference_workers))):
+            thread = threading.Thread(
+                target=_inference_worker_loop,
+                args=(index + 1,),
+                name="inference-worker-%s" % (index + 1),
+            )
+            thread.daemon = True
+            thread.start()
+            _inference_threads.append(thread)
+        return _inference_queue
+
+
+def _inference_worker_loop(worker_id: int) -> None:
+    settings = get_settings()
+    worker_models = {}
+    inference_queue = _inference_queue
+
+    while True:
+        job = inference_queue.get()
+        with _active_jobs_lock:
+            global _active_jobs
+            _active_jobs += 1
+        try:
+            resolved_model_code = normalize_model_code(job.model_code)
+            model = worker_models.get(resolved_model_code)
+            if model is None:
+                model = _create_model(resolved_model_code)
+                worker_models[resolved_model_code] = model
+
+            if job.job_type == "bytes":
+                image = _load_image(job.image_bytes)
+            else:
+                image = _load_image_from_path(Path(job.image_path))
+
+            job.result = _predict_loaded_image_with_model(
+                image,
+                model=model,
+                settings=settings,
+                include_masks=job.include_masks,
+                include_boxes=job.include_boxes,
+                include_summary=job.include_summary,
+                conf=job.conf,
+                model_code=resolved_model_code,
+            )
+        except Exception as exc:
+            job.error = exc
+        finally:
+            job.done.set()
+            inference_queue.task_done()
+            with _active_jobs_lock:
+                _active_jobs -= 1
+
+
+def _run_inference_job(job: _InferenceJob) -> Dict[str, Any]:
+    settings = get_settings()
+    inference_queue = _ensure_inference_pool()
+
+    try:
+        inference_queue.put(job, block=False)
+    except queue.Full:
+        raise InferenceQueueFull("Inference queue is full. Try again later.")
+
+    if not job.done.wait(timeout=max(1, int(settings.inference_wait_timeout))):
+        raise InferenceTimeout("Inference timed out while waiting in queue.")
+
+    if job.error is not None:
+        raise job.error
+
+    return job.result
+
+
 def predict_relative_path(
     relative_path: str,
     storage: str = "attachments",
@@ -185,12 +386,13 @@ def predict_relative_path(
     image_path = resolve_storage_path(relative_path, storage=storage)
     if not image_path.exists():
         raise FileNotFoundError("Image path does not exist: %s" % image_path)
-    image = _load_image_from_path(image_path)
-    return _predict_loaded_image(
-        image,
+    job = _InferenceJob(
+        job_type="path",
+        model_code=model_code,
         include_masks=include_masks,
         include_boxes=include_boxes,
         include_summary=include_summary,
         conf=conf,
-        model_code=model_code,
+        image_path=str(image_path),
     )
+    return _run_inference_job(job)
