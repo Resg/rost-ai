@@ -19,7 +19,7 @@ settings = get_settings()
 app = FastAPI(title=settings.app_name)
 
 
-def _run_path_prediction(relative_path, storage, masks, boxes, summary, conf):
+def _run_path_prediction(relative_path, storage, masks, boxes, summary, conf, model_code=None):
     try:
         return predict_relative_path(
             relative_path,
@@ -28,6 +28,7 @@ def _run_path_prediction(relative_path, storage, masks, boxes, summary, conf):
             include_boxes=boxes,
             include_summary=summary,
             conf=conf,
+            model_code=model_code,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -41,8 +42,8 @@ def healthz():
 
 
 @app.get("/model/info")
-def model_info():
-    return get_model_info()
+def model_info(model_code: str = Query(None)):
+    return get_model_info(model_code=model_code)
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -52,6 +53,7 @@ async def predict(
     boxes: bool = Query(True),
     summary: bool = Query(True),
     conf: float = Query(None),
+    model_code: str = Query(None),
 ):
     contents = await file.read()
     return predict_image(
@@ -60,6 +62,7 @@ async def predict(
         include_boxes=boxes,
         include_summary=summary,
         conf=conf,
+        model_code=model_code,
     )
 
 
@@ -70,6 +73,7 @@ async def predict_batch(
     boxes: bool = Query(True),
     summary: bool = Query(True),
     conf: float = Query(None),
+    model_code: str = Query(None),
 ):
     items = []
     for upload in files:
@@ -83,6 +87,7 @@ async def predict_batch(
                     include_boxes=boxes,
                     include_summary=summary,
                     conf=conf,
+                    model_code=model_code,
                 ),
             )
         )
@@ -98,6 +103,7 @@ def predict_path(payload: PathPredictRequest):
         payload.boxes,
         payload.summary,
         payload.conf,
+        payload.model_code,
     )
     return PathPredictResponse(
         relative_path=payload.relative_path,
@@ -118,6 +124,7 @@ def predict_paths(payload: PathBatchPredictRequest):
             payload.boxes,
             payload.summary,
             item.conf,
+            item.model_code,
         )
         items.append(
             PathBatchPredictResult(

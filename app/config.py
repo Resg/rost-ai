@@ -7,6 +7,8 @@ from pydantic.v1 import BaseSettings
 class Settings(BaseSettings):
     app_name: str = "rost-ai"
     model_dir: Path = Path("models/best_openvino_model")
+    models_root: Path = Path("models")
+    default_model_code: str = "nanofarma-openvino-v1"
     attachments_root: Path = Path("/home/rost/files/doc_attachments")
     uploads_root: Path = Path("runtime/uploads")
     task: str = "segment"

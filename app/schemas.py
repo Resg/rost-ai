@@ -14,6 +14,9 @@ class PredictResponse(BaseModel):
     detections: List[DetectionItem] = Field(default_factory=list)
     total_count: int = 0
     summary: Dict[str, int] = Field(default_factory=dict)
+    model_code: Optional[str] = None
+    image_width: int = 0
+    image_height: int = 0
 
 
 class BatchPredictItem(BaseModel):
@@ -29,6 +32,7 @@ class PathPredictRequest(BaseModel):
     relative_path: str
     storage: Literal["attachments", "uploads"] = "attachments"
     source_name: Optional[str] = None
+    model_code: Optional[str] = None
     conf: Optional[float] = None
     masks: bool = False
     boxes: bool = True
@@ -45,6 +49,7 @@ class PathBatchPredictItem(BaseModel):
     relative_path: str
     storage: Literal["attachments", "uploads"] = "attachments"
     source_name: Optional[str] = None
+    model_code: Optional[str] = None
     conf: Optional[float] = None
 
 

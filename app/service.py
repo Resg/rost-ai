@@ -42,20 +42,60 @@ def resolve_storage_path(relative_path: str, storage: str = "attachments") -> Pa
     return path
 
 
-@lru_cache(maxsize=1)
-def get_model() -> YOLO:
+def normalize_model_code(model_code: str = None) -> str:
     settings = get_settings()
-    model_dir = Path(settings.model_dir)
+    normalized = (model_code or settings.default_model_code or "").strip()
+    if not normalized:
+        raise RuntimeError("Model code is not configured.")
+    return normalized
+
+
+def resolve_model_dir(model_code: str = None) -> Path:
+    settings = get_settings()
+    resolved_model_code = normalize_model_code(model_code)
+    candidates = []
+
+    if resolved_model_code == settings.default_model_code:
+        candidates.append(Path(settings.model_dir))
+
+    candidates.append(Path(settings.models_root) / resolved_model_code)
+    candidates.append(Path(settings.models_root) / resolved_model_code / "best_openvino_model")
+
+    seen = set()
+    for candidate in candidates:
+        candidate = Path(candidate)
+        if str(candidate) in seen:
+            continue
+        seen.add(str(candidate))
+        if candidate.exists():
+            return candidate
+
+    raise RuntimeError(
+        "Model directory does not exist for %s. Tried: %s" % (
+            resolved_model_code,
+            ", ".join([str(candidate) for candidate in candidates]),
+        )
+    )
+
+
+@lru_cache(maxsize=16)
+def get_model(model_code: str = None) -> YOLO:
+    settings = get_settings()
+    model_dir = resolve_model_dir(model_code)
     if not model_dir.exists():
         raise RuntimeError("Model directory does not exist: %s" % model_dir)
     return YOLO(str(model_dir), task=settings.task)
 
 
-def get_model_info() -> Dict[str, Any]:
+def get_model_info(model_code: str = None) -> Dict[str, Any]:
     settings = get_settings()
-    model = get_model()
+    resolved_model_code = normalize_model_code(model_code)
+    model_dir = resolve_model_dir(resolved_model_code)
+    model = get_model(resolved_model_code)
     return {
-        "model_dir": str(settings.model_dir),
+        "model_code": resolved_model_code,
+        "default_model_code": settings.default_model_code,
+        "model_dir": str(model_dir),
         "attachments_root": str(settings.attachments_root),
         "uploads_root": str(settings.uploads_root),
         "task": settings.task,
@@ -70,6 +110,7 @@ def predict_image(
     include_boxes: bool = True,
     include_summary: bool = True,
     conf: float = None,
+    model_code: str = None,
 ) -> Dict[str, Any]:
     image = _load_image(image_bytes)
     return _predict_loaded_image(
@@ -78,6 +119,7 @@ def predict_image(
         include_boxes=include_boxes,
         include_summary=include_summary,
         conf=conf,
+        model_code=model_code,
     )
 
 
@@ -87,9 +129,11 @@ def _predict_loaded_image(
     include_boxes: bool = True,
     include_summary: bool = True,
     conf: float = None,
+    model_code: str = None,
 ) -> Dict[str, Any]:
     settings = get_settings()
-    model = get_model()
+    resolved_model_code = normalize_model_code(model_code)
+    model = get_model(resolved_model_code)
     threshold = settings.default_conf if conf is None else conf
     result = model.predict(
         image,
@@ -102,6 +146,9 @@ def _predict_loaded_image(
     response: Dict[str, Any] = {}
     found_labels: List[str] = []
     detections: List[Dict[str, Any]] = []
+    response["model_code"] = resolved_model_code
+    response["image_width"] = int(image.width or 0)
+    response["image_height"] = int(image.height or 0)
 
     if result.boxes is not None and len(result.boxes):
         for index in range(len(result.boxes)):
@@ -133,6 +180,7 @@ def predict_relative_path(
     include_boxes: bool = True,
     include_summary: bool = True,
     conf: float = None,
+    model_code: str = None,
 ) -> Dict[str, Any]:
     image_path = resolve_storage_path(relative_path, storage=storage)
     if not image_path.exists():
@@ -144,4 +192,5 @@ def predict_relative_path(
         include_boxes=include_boxes,
         include_summary=include_summary,
         conf=conf,
+        model_code=model_code,
     )
