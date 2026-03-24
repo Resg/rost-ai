@@ -95,6 +95,25 @@ def normalize_model_code(model_code: str = None) -> str:
     return normalized
 
 
+def _resolve_model_entry(candidate: Path) -> Path:
+    candidate = Path(candidate)
+    if not candidate.exists():
+        return None
+
+    if candidate.is_file():
+        return candidate
+
+    best_xml = candidate / "best.xml"
+    if best_xml.exists():
+        return best_xml
+
+    xml_files = sorted(candidate.glob("*.xml"))
+    if len(xml_files) == 1:
+        return xml_files[0]
+
+    return candidate
+
+
 def resolve_model_dir(model_code: str = None) -> Path:
     settings = get_settings()
     resolved_model_code = normalize_model_code(model_code)
@@ -112,8 +131,9 @@ def resolve_model_dir(model_code: str = None) -> Path:
         if str(candidate) in seen:
             continue
         seen.add(str(candidate))
-        if candidate.exists():
-            return candidate
+        resolved_entry = _resolve_model_entry(candidate)
+        if resolved_entry is not None:
+            return resolved_entry
 
     raise RuntimeError(
         "Model directory does not exist for %s. Tried: %s" % (
