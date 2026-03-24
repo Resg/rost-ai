@@ -76,6 +76,37 @@ def _resolve_root(storage: str) -> Path:
     raise ValueError("Unsupported storage: %s" % storage)
 
 
+def _ensure_openvino_runtime_dir(candidate: Path) -> Path:
+    candidate = Path(candidate)
+    if not candidate.is_dir():
+        return candidate
+
+    best_xml = candidate / "best.xml"
+    if not best_xml.exists():
+        return candidate
+
+    if candidate.name.endswith("_openvino_model"):
+        return candidate
+
+    settings = get_settings()
+    runtime_root = Path(settings.uploads_root) / "model_aliases"
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    alias_dir = runtime_root / ("%s_openvino_model" % candidate.name)
+
+    try:
+        if alias_dir.is_symlink():
+            if alias_dir.resolve() == candidate.resolve():
+                return alias_dir
+            alias_dir.unlink()
+        elif alias_dir.exists():
+            return alias_dir
+
+        os.symlink(str(candidate.resolve()), str(alias_dir))
+        return alias_dir
+    except OSError:
+        return candidate
+
+
 def resolve_storage_path(relative_path: str, storage: str = "attachments") -> Path:
     if not relative_path:
         raise ValueError("relative_path is required")
@@ -103,9 +134,11 @@ def _resolve_model_entry(candidate: Path) -> Path:
     if candidate.is_file():
         return candidate
 
+    candidate = _ensure_openvino_runtime_dir(candidate)
+
     best_xml = candidate / "best.xml"
     if best_xml.exists():
-        return best_xml
+        return candidate
 
     xml_files = sorted(candidate.glob("*.xml"))
     if len(xml_files) == 1:
