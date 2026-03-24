@@ -163,7 +163,8 @@ def _create_model(model_code: str = None) -> YOLO:
 @lru_cache(maxsize=16)
 def get_model_labels(model_code: str = None) -> Dict[int, str]:
     model_dir = resolve_model_dir(model_code)
-    metadata_path = model_dir / "metadata.yaml"
+    metadata_root = model_dir.parent if model_dir.is_file() else model_dir
+    metadata_path = metadata_root / "metadata.yaml"
     if not metadata_path.exists():
         raise RuntimeError("Model metadata does not exist: %s" % metadata_path)
 
