@@ -9,6 +9,7 @@ import time
 
 from PIL import Image, ImageOps
 from ultralytics import YOLO
+import yaml
 
 from app.config import get_settings
 
@@ -139,11 +140,38 @@ def _create_model(model_code: str = None) -> YOLO:
     return YOLO(str(model_dir), task=settings.task)
 
 
+@lru_cache(maxsize=16)
+def get_model_labels(model_code: str = None) -> Dict[int, str]:
+    model_dir = resolve_model_dir(model_code)
+    metadata_path = model_dir / "metadata.yaml"
+    if not metadata_path.exists():
+        raise RuntimeError("Model metadata does not exist: %s" % metadata_path)
+
+    with metadata_path.open("r", encoding="utf-8") as metadata_file:
+        payload = yaml.safe_load(metadata_file) or {}
+
+    names = payload.get("names") or {}
+    labels = {}
+
+    if isinstance(names, dict):
+        for key, value in names.items():
+            labels[int(key)] = str(value)
+        return labels
+
+    if isinstance(names, (list, tuple)):
+        for index, value in enumerate(names):
+            labels[index] = str(value)
+        return labels
+
+    raise RuntimeError("Model metadata does not contain valid labels: %s" % metadata_path)
+
+
 def get_model_info(model_code: str = None) -> Dict[str, Any]:
     settings = get_settings()
     resolved_model_code = normalize_model_code(model_code)
     model_dir = resolve_model_dir(resolved_model_code)
-    model = get_model(resolved_model_code)
+    get_model(resolved_model_code)
+    labels = get_model_labels(resolved_model_code)
     return {
         "model_code": resolved_model_code,
         "default_model_code": settings.default_model_code,
@@ -154,7 +182,7 @@ def get_model_info(model_code: str = None) -> Dict[str, Any]:
         "image_size": settings.image_size,
         "inference_workers": settings.inference_workers,
         "inference_queue_size": settings.inference_queue_size,
-        "labels": model.names,
+        "labels": labels,
     }
 
 
@@ -203,6 +231,7 @@ def _predict_loaded_image(
     settings = get_settings()
     resolved_model_code = normalize_model_code(model_code)
     model = get_model(resolved_model_code)
+    labels = get_model_labels(resolved_model_code)
     threshold = settings.default_conf if conf is None else conf
     result = model.predict(
         image,
@@ -222,7 +251,7 @@ def _predict_loaded_image(
     if result.boxes is not None and len(result.boxes):
         for index in range(len(result.boxes)):
             box = result.boxes[index]
-            label = model.names[int(box.cls[0])]
+            label = labels.get(int(box.cls[0]), str(int(box.cls[0])))
             found_labels.append(label)
             item = {
                 "label": label,
@@ -253,6 +282,7 @@ def _predict_loaded_image_with_model(
     model_code: str = None,
 ) -> Dict[str, Any]:
     resolved_model_code = normalize_model_code(model_code)
+    labels = get_model_labels(resolved_model_code)
     threshold = settings.default_conf if conf is None else conf
     result = model.predict(
         image,
@@ -272,7 +302,7 @@ def _predict_loaded_image_with_model(
     if result.boxes is not None and len(result.boxes):
         for index in range(len(result.boxes)):
             box = result.boxes[index]
-            label = model.names[int(box.cls[0])]
+            label = labels.get(int(box.cls[0]), str(int(box.cls[0])))
             found_labels.append(label)
             item = {
                 "label": label,
