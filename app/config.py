@@ -12,9 +12,8 @@ class Settings(BaseSettings):
     attachments_root: Path = Path("/home/rost/files/doc_attachments")
     uploads_root: Path = Path("runtime/uploads")
     task: str = "segment"
-    # Cabinet images are already downscaled on upload; 640 keeps recall higher
-    # on shelf photos than the larger default.
-    image_size: int = 640
+    # Current production model is tuned for 1280px inference.
+    image_size: int = 1280
     default_conf: float = 0.25
     default_iou: float = 0.45
     inference_workers: int = 2
