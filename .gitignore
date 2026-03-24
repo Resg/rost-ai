@@ -6,5 +6,6 @@ app/__pycache__/
 .mypy_cache/
 .DS_Store
 .idea/
+runtime/
 models/*
 !models/.gitkeep
