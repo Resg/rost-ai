@@ -178,23 +178,21 @@ def resolve_model_dir(model_code: str = None) -> Path:
 
 @lru_cache(maxsize=16)
 def get_model(model_code: str = None) -> YOLO:
-    settings = get_settings()
     model_dir = resolve_model_dir(model_code)
     if not model_dir.exists():
         raise RuntimeError("Model directory does not exist: %s" % model_dir)
-    return YOLO(str(model_dir), task=settings.task)
+    return YOLO(str(model_dir), task=get_model_task(model_code))
 
 
 def _create_model(model_code: str = None) -> YOLO:
-    settings = get_settings()
     model_dir = resolve_model_dir(model_code)
     if not model_dir.exists():
         raise RuntimeError("Model directory does not exist: %s" % model_dir)
-    return YOLO(str(model_dir), task=settings.task)
+    return YOLO(str(model_dir), task=get_model_task(model_code))
 
 
 @lru_cache(maxsize=16)
-def get_model_labels(model_code: str = None) -> Dict[int, str]:
+def get_model_metadata(model_code: str = None) -> Dict[str, Any]:
     model_dir = resolve_model_dir(model_code)
     metadata_root = model_dir.parent if model_dir.is_file() else model_dir
     metadata_path = metadata_root / "metadata.yaml"
@@ -202,7 +200,12 @@ def get_model_labels(model_code: str = None) -> Dict[int, str]:
         raise RuntimeError("Model metadata does not exist: %s" % metadata_path)
 
     with metadata_path.open("r", encoding="utf-8") as metadata_file:
-        payload = yaml.safe_load(metadata_file) or {}
+        return yaml.safe_load(metadata_file) or {}
+
+
+@lru_cache(maxsize=16)
+def get_model_labels(model_code: str = None) -> Dict[int, str]:
+    payload = get_model_metadata(model_code)
 
     names = payload.get("names") or {}
     labels = {}
@@ -217,7 +220,33 @@ def get_model_labels(model_code: str = None) -> Dict[int, str]:
             labels[index] = str(value)
         return labels
 
-    raise RuntimeError("Model metadata does not contain valid labels: %s" % metadata_path)
+    raise RuntimeError("Model metadata does not contain valid labels.")
+
+
+def get_model_task(model_code: str = None) -> str:
+    settings = get_settings()
+    metadata = get_model_metadata(model_code)
+    return str(metadata.get("task") or settings.task)
+
+
+def get_model_image_size(model_code: str = None) -> int:
+    settings = get_settings()
+    metadata = get_model_metadata(model_code)
+    raw_imgsz = metadata.get("imgsz")
+
+    if isinstance(raw_imgsz, (list, tuple)) and raw_imgsz:
+        try:
+            return int(raw_imgsz[0])
+        except (TypeError, ValueError):
+            return int(settings.image_size)
+
+    if raw_imgsz not in (None, ""):
+        try:
+            return int(raw_imgsz)
+        except (TypeError, ValueError):
+            return int(settings.image_size)
+
+    return int(settings.image_size)
 
 
 def get_model_info(model_code: str = None) -> Dict[str, Any]:
@@ -226,14 +255,16 @@ def get_model_info(model_code: str = None) -> Dict[str, Any]:
     model_dir = resolve_model_dir(resolved_model_code)
     get_model(resolved_model_code)
     labels = get_model_labels(resolved_model_code)
+    task = get_model_task(resolved_model_code)
+    image_size = get_model_image_size(resolved_model_code)
     return {
         "model_code": resolved_model_code,
         "default_model_code": settings.default_model_code,
         "model_dir": str(model_dir),
         "attachments_root": str(settings.attachments_root),
         "uploads_root": str(settings.uploads_root),
-        "task": settings.task,
-        "image_size": settings.image_size,
+        "task": task,
+        "image_size": image_size,
         "inference_workers": settings.inference_workers,
         "inference_queue_size": settings.inference_queue_size,
         "labels": labels,
@@ -286,10 +317,11 @@ def _predict_loaded_image(
     resolved_model_code = normalize_model_code(model_code)
     model = get_model(resolved_model_code)
     labels = get_model_labels(resolved_model_code)
+    image_size = get_model_image_size(resolved_model_code)
     threshold = settings.default_conf if conf is None else conf
     result = model.predict(
         image,
-        imgsz=settings.image_size,
+        imgsz=image_size,
         conf=threshold,
         iou=settings.default_iou,
         verbose=False,
@@ -337,10 +369,11 @@ def _predict_loaded_image_with_model(
 ) -> Dict[str, Any]:
     resolved_model_code = normalize_model_code(model_code)
     labels = get_model_labels(resolved_model_code)
+    image_size = get_model_image_size(resolved_model_code)
     threshold = settings.default_conf if conf is None else conf
     result = model.predict(
         image,
-        imgsz=settings.image_size,
+        imgsz=image_size,
         conf=threshold,
         iou=settings.default_iou,
         verbose=False,
